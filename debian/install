@@ -1,0 +1,5 @@
+install-files/applications                usr/share
+install-files/bin                         usr
+install-files/system                       lib/systemd
+install-files/org.wasta-winshare.policy   usr/share/polkit-1/actions
+wasta-winshare                            usr/share

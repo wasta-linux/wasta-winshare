@@ -1,0 +1,18 @@
+Source: wasta-winshare
+Section: utils
+Priority: extra
+Maintainer: Rik Shaw <rikshaw76@gmail.com>
+Build-Depends: debhelper (>= 8.0.0)
+Standards-Version: 3.9.7
+Homepage: https://github.com/wasta-linux/wasta-winshare
+
+Package: wasta-winshare
+Architecture: all
+Depends: at, cifs-utils, policykit-1, systemd, zenity, ${shlibs:Depends}, ${misc:Depends}
+Description: Setup Windows Automount Share (using samba via cifs)
+ GUI dialog to configure an automount Windows fileshare for Linux clients.
+ An entry in /etc/fstab is setup using cifs for the fileshare settings
+ inputted by the user.  Systemd automount is NOT used as it seems unstable
+ under Ubuntu 16.04.  Rather, a cron job is added to "mount -a" every hour
+ to make sure the mounts persist.  When mount not found, cron job will exit
+ without a problem.

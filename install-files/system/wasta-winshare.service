@@ -1,0 +1,11 @@
+[Unit]
+Description=Run wasta-winshare scripts at system start and stop
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/share/wasta-winshare/script/wasta-winshare-login-wrapper.sh
+ExecStop=/usr/share/wasta-winshare/script/wasta-winshare-logout.sh
+
+[Install]
+WantedBy=multi-user.target

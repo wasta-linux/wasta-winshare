@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=wasta [WinShare]
+Comment=Setup Windows Fileshare automount connection
+Exec=wasta-winshare-pkexec
+Terminal=false
+Type=Application
+Icon=wasta-linux
+Categories=Application;System;

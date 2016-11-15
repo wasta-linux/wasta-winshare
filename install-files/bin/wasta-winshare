@@ -1,0 +1,349 @@
+#!/bin/bash
+
+# ==============================================================================
+# wasta-winshare
+#
+#       Script will set up Samba share to be "automounted" on startup
+#
+#   2012-11-04 rik: Initial script
+#   2013-01-03 rik: Added superuser block.
+#   2013-08-22 rik: General compatiblity updates / integrated Windows Network
+#       setup script.
+#   2013-09-24 rik: Fixed \040 additions to fstab for spaces in names
+#   2013-10-20 jcl: Added a "not defined" desktop name - skipping shortcut creation.
+#   2013-11-26 jcl: superuser block: remove -l in su -l (wrong working directory
+#       context) and added $* to pass command line parameters along.
+#   2013-12-03 rik: Removed smbfs, added cifs-utils.  TODO: evaluate if winbind
+#       and adding wins to nsswitch.conf are doing anything for us.  Last I
+#       recall in KRT I needed them for name resolution, but need to recheck.
+#       Also cleaned up some sed lines thanks to jcl.
+#   2014-05-28 rik: Added uid=$USER,gid=$USER to fstab cifs entry.
+#   2016-10-26 rik: refactored using zenity
+#
+# ==============================================================================
+
+ICON=/usr/share/icons/hicolor/64x64/apps/wasta-linux.png
+DIR=/usr/share/wasta-winshare
+
+# ------------------------------------------------------------------------------
+# function: scriptExit
+#   - parameter 1: title
+#   - parameter 1: message
+# ------------------------------------------------------------------------------
+scriptExit() {
+    EXIT_TITLE="$1"
+    EXIT_MSG="$2"
+
+    zenity --info --title="wasta [WinShare]: $EXIT_TITLE" \
+        --window-icon="$ICON" --width=400 \
+        --text "$EXIT_MSG"
+    exit 0
+}
+
+# ------------------------------------------------------------------------------
+# Check to ensure running as root
+# ------------------------------------------------------------------------------
+if [ $(id -u) -ne 0 ]
+then
+    #exit: must run as admin user
+    scriptExit "Exiting..." "Wasta-WinShare not started as administrative user.
+
+Exiting..."
+fi
+
+# ------------------------------------------------------------------------------
+# SERVER
+# ------------------------------------------------------------------------------
+
+DEF_SERVER=0.0.0.0
+SERVER_TEMP=""
+SERVER_TEMP=$(zenity --entry --title "Wasta [WinServer]" \
+    --title="wasta [WinShare]" \
+    --window-icon="$ICON" \
+    --text="This utility will configure a 'Windows' (Samba) Fileshare
+to automount at system startup using 'cifs'.
+
+Enter Server Name or IP Address:" \
+    --entry-text "$DEF_SERVER")
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Server not entered correctly.  Exiting..."
+fi
+
+# Trim whitespace
+SERVER=${SERVER_TEMP//[[:space:]]/}
+
+if [ "$SERVER" == "$DEF_SERVER" ]  || [ -z "$SERVER" ];
+then
+    #exit: server is default or empty
+    scriptExit "Exiting..." "No Server Name or IP Address entered.  Exiting..."
+fi
+
+# ------------------------------------------------------------------------------
+# SHARE
+# ------------------------------------------------------------------------------
+
+DEF_SHARE="Fileshare"
+SHARE_TEMP=""
+SHARE_TEMP=$(zenity --entry --title "Wasta [WinServer]" \
+    --window-icon="$ICON" \
+    --text="Fileshare Name can be a subfolder, separated by using '/'
+
+      Example: 'Finance/RDE-Batch' is a valid share name.
+      Example: 'D$/Temp' is a valid share name.
+
+Enter Fileshare Name on $SERVER Server:" \
+    --entry-text "$DEF_SHARE")
+
+# Trim leading or trailing whitespace (xargs w/ no argument does this)
+SHARE_TEMP_1=$(echo "$SHARE_TEMP" | xargs)
+# Trim any leading "/"
+SHARE_TEMP_2=${SHARE_TEMP_1/#\/}
+# Trim any trailing "/"
+SHARE=${SHARE_TEMP_2/%\/}
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Fileshare not entered correctly.  Exiting..."
+fi
+
+if [ "$SHARE" == "$DEF_SHARE" ] || [ -z "$SHARE" ];
+then
+    #exit: share is default or empty
+    scriptExit "Exiting..." "No Fileshare name entered.  Exiting..."
+fi
+
+# ------------------------------------------------------------------------------
+# SHORT: Display name for network mount
+# ------------------------------------------------------------------------------
+
+DEF_SHORT=${SHARE//\//-}
+SHORT_TEMP=""
+SHORT_TEMP=$(zenity --entry --title "Wasta [WinServer]" \
+    --window-icon="$ICON" \
+    --text="Desktop Shortcut Name for Fileshare:
+
+Example: if the Fileshare is 'Finance/RDE-Batch'
+  then a good Desktop Shortcut would be 'Finance-RDE-Batch'
+
+Note: Shortcut can NOT contain a '/'
+
+Enter Desktop Shortcut Name for Fileshare:" \
+    --entry-text "$DEF_SHORT")
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Desktop Shortcut not entered correctly.  Exiting..."
+fi
+
+if [ -z "$SHORT_TEMP" ];
+then
+    #set shortcut to fileshare name
+    SHORT_TEMP=$DEF_SHORT
+fi
+
+# Trim leading or trailing whitespace (xargs w/ no argument does this)
+SHORT_TEMP_1=$(echo "$SHORT_TEMP" | xargs)
+
+# Trim any leading "/"
+SHORT_TEMP_2=${SHORT_TEMP_1/#\/}
+# Trim any trailing "/"
+SHORT_TEMP_3=${SHORT_TEMP_2/%\/}
+# replace any "/" in Shortname with "-"
+SHORT=${SHORT_TEMP_3//\//-}
+
+# ------------------------------------------------------------------------------
+# LOCAL_ID
+# ------------------------------------------------------------------------------
+
+# when running with pkexec, user enviornment variables are thrown away,
+#   but at least $PKEXEC_UID is set to $UID, so can then lookup user name
+DEF_ID=$(getent passwd "$PKEXEC_UID" | cut -d: -f1)
+LOCAL_ID_TEMP=""
+LOCAL_ID_TEMP=$(zenity --entry --title "Wasta [WinServer]" \
+    --window-icon="$ICON" \
+    --text="Local Computer's UserID should not have any spaces.
+
+Enter the Local Computer's UserID:" \
+    --entry-text "$DEF_ID")
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Local Computer's UserID not entered correctly.  Exiting..."
+fi
+
+# Trim any whitespace (not just leading / trailing)
+LOCAL_ID_TEMP_1=${LOCAL_ID_TEMP//[[:space:]]/}
+# convert to lowercase
+LOCAL_ID=${LOCAL_ID_TEMP_1,,}
+
+# ------------------------------------------------------------------------------
+# SERVER_ID
+# ------------------------------------------------------------------------------
+
+SERVER_ID_TEMP=""
+SERVER_ID_TEMP=$(zenity --entry --title "Wasta [WinServer]" \
+    --window-icon="$ICON" \
+    --text="Server's UserID should not have any spaces.
+
+Enter the Server's UserID:" \
+    --entry-text "$LOCAL_ID")
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Server's UserID not entered correctly.  Exiting..."
+fi
+
+# Trim any whitespace (not just leading / trailing)
+SERVER_ID=${SERVER_ID_TEMP//[[:space:]]/}
+
+# ------------------------------------------------------------------------------
+# SERVER_PASS
+# ------------------------------------------------------------------------------
+
+SERVER_PASS=""
+SERVER_PASS=$(zenity --entry --title "Wasta [WinServer]" \
+    --window-icon="$ICON" \
+    --text="Server's User Password should not have any spaces.
+
+Enter the Server Password for $SERVER_ID:" \
+    --entry-text "password")
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Server Password for $SERVER_ID not entered correctly.  Exiting..."
+fi
+
+# ------------------------------------------------------------------------------
+# SUMMARY
+# ------------------------------------------------------------------------------
+
+zenity --question --title "Wasta [WinServer]" --no-wrap \
+        --window-icon="$ICON" \
+        --text "<b>Summary:</b>
+
+*** Entered SERVER: $SERVER
+*** Entered SHARE NAME: $SHARE
+*** Entered DESKTOP SHORTCUT: $SHORT
+
+*** Entered Local USERID: $LOCAL_ID
+*** Entered Server USERID: $SERVER_ID
+*** Entered Server PASSWORD: $SERVER_PASS
+
+Is everything correct?  If not, click 'No'
+and you will need to start over."
+
+if [ "$?" -ne 0 ];
+then
+    #exit:
+    scriptExit "Exiting..." "Settings not entered correctly.
+
+Re-run Wasta-Winshare to try again.
+
+Exiting..."
+fi
+
+# ------------------------------------------------------------------------------
+# Set up /etc/fstab and mount point
+# ------------------------------------------------------------------------------
+
+# make root credentials file for username, pwd
+CREDS_FILE=/root/.$SERVER-$SERVER_ID-credentials
+echo -e "username=$SERVER_ID\npassword=$SERVER_PASS" > $CREDS_FILE
+
+chmod 700 $CREDS_FILE
+
+# fstab isn't going to like any spaces in share or mountpoint names, so adjust
+#   below replaces ' ' with '\040' in variables (double \\ so taken literally at sed)
+SHARE_FSTAB=${SHARE//[[:space:]]/'\\040'}
+SHORT_FSTAB=${SHORT//[[:space:]]/'\\040'}
+
+# Make fstab entry
+# options:
+#   credentials=$CREDS_FILE: use file to store user and password
+#   iocharset=utf8: Ensure unicode compliance for non-english file/folder names
+#   nobrl: byte range locks: seems that OpenOffice docs *may* have errors without this when saving
+#   _netdev: ensure network UP before attempting mount
+#   file_mode=0777: permissions are set on server: 0777 is MAX permission
+#   dir_mode=0777: permissions are set on server: 0777 is MAX permission
+#   noauto: only mount "on demand"
+#   x-systemd.automount: only for systemd-enabled machines.
+
+# 2016-11-06: x-systemd.automount seems unstable, not using for now....
+#if [ -x /bin/systemd ];
+#then
+#    SYSTEMD_AUTOMOUNT=",noauto,x-systemd.automount"
+#else
+#    SYSTEMD_AUTOMOUNT=""
+#fi
+
+# create /etc/fstab entry
+# note: any #wasta-winshare entries will be removed in the prerm script
+#   if wasta-winshare is uninstalled.
+sed -i -e '$a //'$SERVER'/'$SHARE_FSTAB' /mnt/'$SHORT_FSTAB' cifs credentials='$CREDS_FILE',iocharset=utf8,nobrl,_netdev,uid='$LOCAL_ID',gid='$LOCAL_ID',file_mode=0777,dir_mode=0777 0 0 #wasta-winshare' \
+    -e '\@//'$SERVER'/'$SHARE_FSTAB'.*#wasta-winshare@d' \
+    /etc/fstab
+
+MOUNT=/mnt/"$SHORT"
+
+if [ -e "$MOUNT" ];
+then
+    # try to unmount, since can get confused if you use the same
+    # mount point for 2 different server fileshares
+    umount --force "$MOUNT"
+else
+    # Ensure mount point exists
+    mkdir -p "$MOUNT"
+fi
+
+# 777 permissions for mount point: will have server ACL control permissions
+chmod 777 "$MOUNT"
+
+# ------------------------------------------------------------------------------
+# Set up home directory symlink to /mnt location and mount!
+# ------------------------------------------------------------------------------
+
+# mount it!
+mount "$MOUNT"
+
+if [ "$?" -eq 0 ];
+then
+    # Mount successful
+    # create user shortcuts (if don't already exist):
+    if ! [ -L /home/$LOCAL_ID/Desktop/"$SHORT" ];
+    then
+        ln -sf "$MOUNT" /home/$LOCAL_ID/Desktop/"$SHORT"
+    fi
+
+    if ! [ -L /home/$LOCAL_ID/Documents/"$SHORT" ];
+    then
+        ln -sf "$MOUNT" /home/$LOCAL_ID/Documents/"$SHORT"
+    fi
+
+    zenity --info --title "Wasta [WinServer]" --no-wrap \
+        --window-icon="$ICON" \
+        --text "Fileshare mounted successfully.
+
+Find the files at /home/$LOCAL_ID/Desktop/$SHORT"
+else
+    # if error, remove /etc/fstab entry and mount point
+    umount --force "$MOUNT"
+    rm -r "$MOUNT"
+    sed -i -e '\@//'$SERVER'/'$SHARE_FSTAB'@d' /etc/fstab
+
+    #exit: some error
+    scriptExit "Exiting..." "Mount of fileshare not successful.
+
+You will need to re-run this script..."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+exit 0
